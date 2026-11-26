@@ -1,0 +1,60 @@
+# PromptStudio 许可协议 1.0（非商业）
+
+版权所有 (c) 2026 minut（下称「作者」）
+
+本协议规定你可以如何使用、修改和分发 PromptStudio（下称「本软件」）。下载、安装或使用本软件，即表示你接受下列条款。若不接受，请停止使用并删除本软件。
+
+---
+
+## 一、授予你的权利（免费、永久、全球范围、非独占）
+
+1. **使用**：个人使用、学习、研究、评估、创作作品。
+2. **安装插件**：为自用安装、编写、修改、加载插件（你自己编写的插件归你自己所有，不受本协议约束）。
+3. **修改**：修改源码供自己使用。
+4. **分发**：把原始或修改后的副本提供给他人，但须同时满足：
+   - 保留本协议全文与版权声明，不得删除或隐藏；
+   - 不收取任何费用（只收介质/流量成本除外）；
+   - 修改版须显著标注「已修改」，且不得让接收方误以为出自作者；
+   - 接收方同样受本协议约束。
+
+## 二、需要作者书面许可才能做的事（默认为禁止）
+
+1. **任何商业用途**，包括但不限于：销售本软件或其修改版；付费分发、租售、按次收费；作为付费产品或付费服务的一部分；以本软件能力提供 SaaS / 托管 / 代生成等收费服务；企业或组织内部的生产性使用（内部试用、评估除外）。
+2. 以本软件名义发布衍生作品，或暗示作者为本软件背书。
+3. 移除、覆盖、隐匿本软件中的版权、作者署名（发布者：minut）与许可声明。
+
+## 三、商业授权
+
+需要商业使用时，请联系作者取得单独的**商业授权**（可协商范围与费用）。未取得书面授权前的商业使用均属违约。
+
+## 四、免责声明
+
+本软件按「现状」提供，不附带任何明示或默示担保，包括但不限于适销性、特定用途适用性与不侵权担保。使用本软件产生的任何直接或间接损失（含数据丢失、模型输出内容、第三方服务费用），作者不承担责任。你须自行确保使用本软件生成的内容符合所在地法律与所用模型的服务条款。
+
+## 五、终止
+
+违反本协议任何条款，本协议授予你的权利立即自动终止，你应停止使用并删除全部副本。第一、二、四节在终止后继续有效。
+
+## 六、其他
+
+本协议适用中华人民共和国法律。本协议与英文版本冲突时，以中文版本为准。
+
+---
+
+# PromptStudio License 1.0 (Non-Commercial)
+
+Copyright (c) 2026 minut ("the Author").
+
+By downloading, installing or using PromptStudio ("the Software") you accept these terms. If you do not accept them, stop using the Software and delete all copies.
+
+**You may, free of charge, worldwide, non-exclusively:** use the Software for personal, educational, research, evaluation and creative purposes; install, write and load your own plugins (your plugins remain yours); modify the source for your own use; redistribute original or modified copies provided you keep this license and the copyright notice intact, charge no fee, mark modified versions as modified, and pass these terms on.
+
+**You may NOT, without the Author's prior written permission:** use the Software commercially in any form — selling it, paid distribution, bundling it into a paid product or paid service, offering paid SaaS/hosted generation, or production use inside an organization (evaluation excepted); publish derivative works under the Software's name or imply endorsement; remove or obscure copyright, author attribution ("Publisher: minut") or this license.
+
+**Commercial licensing** is available on request from the Author. Any commercial use before such a grant is a breach of this license.
+
+**Disclaimer.** The Software is provided "AS IS", without warranty of any kind, express or implied. The Author is not liable for any damages arising from its use, including lost data, generated content, or third-party service costs. You are responsible for complying with the laws of your jurisdiction and the terms of any model or service you connect to.
+
+**Termination.** Any breach terminates your rights immediately; stop using and delete all copies. Sections 1, 2, 4 and 5 survive.
+
+**Governing law:** the laws of the People's Republic of China. The Chinese text prevails over this English translation.

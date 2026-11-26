@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*.log
+# 运行时产物（ComfyUI 输出落盘、保存过的工作流副本）
+out/
+wf/

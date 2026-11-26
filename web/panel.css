@@ -1,0 +1,104 @@
+/* ComfyUI 工作流插件 · 面板样式（全部 cr- 前缀，不污染宿主） */
+.cr-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.cr-tab {
+  border: 1px solid var(--line, #2b3240); background: transparent; color: var(--fg2, #9aa4b2);
+  padding: 5px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; transition: .15s;
+}
+.cr-tab:hover { color: var(--fg, #e6ebf2); border-color: var(--line2, #3a4354); }
+.cr-tab.on { background: var(--acc, #3b82f6); border-color: var(--acc, #3b82f6); color: #fff; }
+
+.cr-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; margin-left: 8px; flex: none; }
+.cr-dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, .6); }
+.cr-dot.err { background: #ef4444; }
+
+.cr-pane { display: flex; flex-direction: column; gap: 8px; }
+.cr-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cr-lb { font-size: 12px; color: var(--fg2, #9aa4b2); margin-top: 2px; }
+
+.cr-sel, .cr-inp, .cr-ta {
+  background: var(--bg2, #161a21); color: var(--fg, #e6ebf2);
+  border: 1px solid var(--line, #2b3240); border-radius: 8px;
+  padding: 7px 10px; font-size: 13px; font-family: inherit; outline: none;
+}
+.cr-sel:focus, .cr-inp:focus, .cr-ta:focus { border-color: var(--acc, #3b82f6); }
+.cr-sel { flex: 1; min-width: 140px; cursor: pointer; }
+.cr-inp { flex: 1; min-width: 90px; }
+.cr-ta { width: 100%; resize: vertical; line-height: 1.55; box-sizing: border-box; }
+
+.cr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cr-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cr-cell .cr-inp, .cr-cell .cr-sel { width: 100%; box-sizing: border-box; }
+
+.cr-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: 1px solid var(--line, #2b3240); background: var(--bg2, #161a21); color: var(--fg, #e6ebf2);
+  border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; text-decoration: none;
+  transition: .15s; font-family: inherit;
+}
+.cr-btn:hover { border-color: var(--acc, #3b82f6); color: #fff; }
+.cr-btn.sm { padding: 4px 10px; font-size: 12px; }
+.cr-btn.primary { background: var(--acc, #3b82f6); border-color: var(--acc, #3b82f6); color: #fff; }
+.cr-btn.primary:hover { filter: brightness(1.08); }
+.cr-btn.danger:hover { border-color: #ef4444; color: #ef4444; }
+.cr-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.cr-prog { height: 6px; background: var(--bg2, #161a21); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+.cr-prog > i { display: block; height: 100%; width: 0; background: var(--acc, #3b82f6); transition: width .4s ease; }
+
+.cr-out { display: flex; flex-direction: column; gap: 10px; }
+.cr-item {
+  border: 1px solid var(--line, #2b3240); border-radius: 10px; overflow: hidden;
+  background: var(--bg2, #161a21);
+}
+.cr-media { display: block; width: 100%; max-height: 420px; object-fit: contain; background: #000; }
+.cr-acts { display: flex; align-items: center; gap: 8px; padding: 6px 8px; flex-wrap: wrap; }
+
+.cr-drop {
+  border: 1px dashed var(--line2, #3a4354); border-radius: 10px; padding: 18px 12px;
+  text-align: center; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+  color: var(--fg2, #9aa4b2); transition: .15s;
+}
+.cr-drop:hover, .cr-drop.hot { border-color: var(--acc, #3b82f6); color: var(--fg, #e6ebf2); background: rgba(59, 130, 246, .06); }
+
+.cr-kv { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--fg2, #9aa4b2); }
+.cr-kv b { color: var(--fg, #e6ebf2); font-weight: 600; }
+.cr-note { font-size: 12px; color: var(--fg2, #9aa4b2); padding: 4px 0; }
+.cr-note.warn { color: #f59e0b; }
+.cr-sep {
+  font-size: 12px; color: var(--fg2, #9aa4b2); border-top: 1px solid var(--line, #2b3240);
+  padding-top: 8px; margin-top: 6px;
+}
+.cr-wf { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; }
+.cr-wf b { font-weight: 600; }
+.cr-err {
+  color: #f87171; background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .35);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; word-break: break-word;
+}
+
+/* 提示词上方的快捷取用按钮：窄栏里自动换行 */
+.cr-picks{flex-wrap:wrap;gap:6px}
+.cr-picks .cr-btn{padding:4px 8px;font-size:12px}
+
+/* 分辨率：宽 × 高 + 常用比例快捷键 */
+.cr-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.cr-line .cr-inp{width:78px;flex:0 0 auto}
+.cr-line .cr-x{color:var(--fg2);font-size:12px}
+.cr-line .cr-sep{width:1px;height:16px;background:var(--line);margin:0 2px}
+.cr-line .cr-btn{padding:3px 6px;font-size:11px}
+
+/* 像素（MP）输入与比例键 */
+.cr-line .cr-mp{width:62px;flex:0 0 auto;text-align:right}
+.cr-line .cr-sel{flex:1 1 auto;min-width:120px}
+#crResInfo{margin-top:4px}
+#crResInfo + #crResHint{margin-top:2px}
+
+/* 模型下拉与 LoRA 强度 */
+.cr-line .cr-mdl{flex:1 1 140px;min-width:120px}
+.cr-line .cr-ls{width:58px;flex:0 0 auto;text-align:right}
+#crModels .cr-line+.cr-line{margin-top:4px}
+#crLoras .cr-line+.cr-line{margin-top:4px}
+
+/* 保存行：按钮与勾选不换行，提示独占一行 */
+#crPersist{flex:0 0 auto;white-space:nowrap}
+.cr-line label.mini{white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px}
+#crSaveTip{flex:1 1 100%;margin-top:2px}

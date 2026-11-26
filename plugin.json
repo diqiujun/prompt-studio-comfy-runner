@@ -1,0 +1,35 @@
+{
+  "id": "comfy_runner",
+  "name": "ComfyUI 工作流",
+  "tagline": "导入 ComfyUI 的 API 工作流，在 PM 里直接出图、出视频",
+  "description": "导入 ComfyUI 导出的 API 格式工作流（api json），自动识别提示词 / 分辨率 / 时长等可填位置；在面板里改提示词、时长、画幅即可提交生成，结果直接预览、可存为参考图。步数、采样器、模型等参数沿用工作流原值。",
+  "version": "1.0.0",
+  "author": "minut",
+  "entry": "plugin.py",
+  "settings": [
+    {
+      "key": "comfy_url",
+      "label": "ComfyUI 地址",
+      "type": "text",
+      "default": "http://127.0.0.1:8188"
+    },
+    {
+      "key": "poll_ms",
+      "label": "进度轮询间隔（毫秒）",
+      "type": "number",
+      "default": 2000
+    },
+    {
+      "key": "default_negative",
+      "label": "负向提示词（留空＝不改工作流）",
+      "type": "text",
+      "default": ""
+    }
+  ],
+  "web": {
+    "js": "web/panel.js",
+    "css": "web/panel.css",
+    "mount": "sidebar",
+    "title": "ComfyUI 工作流"
+  }
+}
