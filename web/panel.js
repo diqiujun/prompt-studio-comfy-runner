@@ -384,14 +384,22 @@
              r2v: "1–9 张参考图，提示词用 <Picture 1>… 指代",
              v2v: "需要源视频（图片另可给）", rv2v: "源视频 + 可选参考图",
              mixed: "按段落各自要", t2i: "不需要图片", i2i: "1 张以上参考图" }[mode] || "");
-      // 一句话：几个槽 + 槽名（空槽并入同一句）
+      // 一句话：已接图的槽列名字，空槽聚合成一句（不逐个列）
       var parts = [];
       if (refs.length) {
-        var names = refs.slice(0, 6).map(function (r) {
-          return r.label + (r.empty ? "（空）" : "");
-        }).join("、") + (refs.length > 6 ? "…" : "");
-        parts.push((refs.length === 1 ? "1 个图槽：" : refs.length + " 个图槽，按上传顺序填：") + names);
-        if (!refs.some(function (r) { return r.empty; })) parts.push("槽位已全部接图");
+        var used = refs.filter(function (r) { return !r.empty; });
+        var empties = refs.filter(function (r) { return r.empty; });
+        var names = used.slice(0, 6).map(function (r) {
+          return r.label + (r.orig ? "←" + String(r.orig).split(/[\\/]/).pop() : "");
+        }).join("、") + (used.length > 6 ? "…" : "");
+        if (used.length) {
+          parts.push("你上传的图会按顺序替换这 " + used.length + " 个槽：" + names);
+        }
+        if (empties.length) {
+          parts.push("另有 " + empties.length + " 个空槽可继续加图（这个工作流最多 "
+            + refs.length + " 张）");
+        }
+        if (!used.length) parts.push("这个工作流还没有接图，上传后自动接上");
       } else if (NEED_IMG[mode]) {
         parts.push("这个工作流没有独立图槽，上传的图会跳过");
       }

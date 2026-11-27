@@ -44,6 +44,8 @@ EMBED_FIELDS = ("timeline_data", "timeline", "segments", "shots", "script",
 VIDEO_OUT = ("VHS_VideoCombine", "SaveVideo", "CreateVideo", "SaveAnimatedWEBP", "SaveWEBM",
              "SaveAnimatedPNG", "VideoCombine", "SaveVideoUI")
 IMAGE_OUT = ("SaveImage", "SaveImageAdvanced", "PreviewImage", "ImageSave", "SaveImageWebsocket")
+# 多图上限（导演台 r2v 也是 9 张参考图）
+MAX_IMAGES = 9
 # 宽高节点（值：宽、高、帧数字段名）
 SIZE_NODES = {
     "EmptyLatentImage": ("width", "height", None),
@@ -509,6 +511,23 @@ def _collect_refs(nodes, directors):
             slots.append({"node": nid, "field": "image", "label": label,
                           "group": 0, "role": "load", "empty": False, "hint": hint,
                           "orig": (n.get("inputs") or {}).get("image")})
+    # 多图编辑（TextEncode*.images.image_N）：现有槽没占满时补空槽，最多 9 张
+    # 空槽在生成时由 _new_loader 新建 LoadImage 并接到 images.image_k 上
+    if not directors and slots and len(slots) < MAX_IMAGES:
+        for cid, cn in nodes.items():
+            ccls = cn.get("class_type") or ""
+            if "TextEncode" not in ccls:
+                continue
+            ins = cn.get("inputs") or {}
+            idxs = [int(m.group(1)) for m in
+                    (re.match(r"^images\.image_(\d+)$", str(k)) for k in ins) if m]
+            if not idxs:
+                continue
+            for k in range(max(idxs) + 1, MAX_IMAGES + 1):
+                slots.append({"node": None, "field": "images.image_%d" % k,
+                              "label": "参考图%d（空）" % k, "group": 0,
+                              "role": "load", "empty": True, "host": cid})
+            break
     # 另一种接法：素材直接存在导演台的 timeline_data 里（没有 LoadImage、也没有分组输入）
     if directors and not slots:
         for did in directors:
@@ -537,9 +556,16 @@ def _collect_refs(nodes, directors):
                                       "kind": "timeline_ref", "seg": si, "ref": ri,
                                       "label": "段%d·参考图%d" % (si + 1, ri + 1),
                                       "group": 0, "role": "refs", "empty": False, "orig": nm})
+                    # 已有参考图也补到上限：r2v 最多 9 张
+                    for k in range(len(refs), MAX_IMAGES):
+                        slots.append({"node": did, "field": "timeline_data",
+                                      "path": "segments[%d].refs[].imageFile" % si,
+                                      "kind": "timeline_ref", "seg": si, "ref": None,
+                                      "label": "段%d·参考图%d（空）" % (si + 1, k + 1),
+                                      "group": 0, "role": "refs", "empty": True})
                 else:
-                    # 时间轴上还没有参考图：给几个空槽，上传后往里追加
-                    for k in range(4):
+                    # 时间轴上还没有参考图：补到上限，上传后往里追加
+                    for k in range(MAX_IMAGES):
                         slots.append({"node": did, "field": "timeline_data",
                                       "path": "segments[%d].refs[].imageFile" % si,
                                       "kind": "timeline_ref", "seg": si, "ref": None,
