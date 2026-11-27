@@ -46,6 +46,7 @@
 | 时长 | `length` / `total_frames` / `num_frames` + `frame_rate` / `fps`，换算成秒 |
 | 模型 / LoRA | 扫 `unet_name` / `ckpt_name` / `clip_name` / `vae_name` / `lora_name` 等字段；ComfyUI 开着时点「从 ComfyUI 拉模型列表」可下拉选真实文件 |
 | 参考图槽 | 沿导演台的 `i2v_groups` / `r2v_groups` → GroupsCombine → 分组节点，识别首帧/尾帧/参考图槽；空槽在生成时按上传顺序自动新建 LoadImage |
+| 时间轴素材 | 有些工作流不挂 LoadImage，参考图存在导演台 `timeline_data` 的 `segments[N].refs[].imageFile`（首尾帧是 `startImage` / `endImage`）。插件会认出「段1·参考图1」这类槽，上传后写回 `imageFile`；r2v/rv2v 只列参考图、i2v 只列首帧、fl2v 列首帧+尾帧、v2v 不列图 |
 
 ## 被开关挡住的字段怎么办
 
