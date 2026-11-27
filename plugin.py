@@ -509,9 +509,100 @@ def _collect_refs(nodes, directors):
             slots.append({"node": nid, "field": "image", "label": label,
                           "group": 0, "role": "load", "empty": False, "hint": hint,
                           "orig": (n.get("inputs") or {}).get("image")})
+    # 另一种接法：素材直接存在导演台的 timeline_data 里（没有 LoadImage、也没有分组输入）
+    if directors and not slots:
+        for did in directors:
+            ins = (nodes.get(did) or {}).get("inputs") or {}
+            raw = ins.get("timeline_data")
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                tl = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                continue
+            segs = tl.get("segments") if isinstance(tl, dict) else None
+            if not isinstance(segs, list):
+                continue
+            for si, seg in enumerate(segs):
+                if not isinstance(seg, dict):
+                    continue
+                refs = seg.get("refs")
+                if isinstance(refs, list) and refs:
+                    for ri, r in enumerate(refs):
+                        if not isinstance(r, dict):
+                            continue
+                        nm = str(r.get("imageFile") or r.get("image_file") or "").strip()
+                        slots.append({"node": did, "field": "timeline_data",
+                                      "path": "segments[%d].refs[%d].imageFile" % (si, ri),
+                                      "kind": "timeline_ref", "seg": si, "ref": ri,
+                                      "label": "段%d·参考图%d" % (si + 1, ri + 1),
+                                      "group": 0, "role": "refs", "empty": False, "orig": nm})
+                else:
+                    # 时间轴上还没有参考图：给几个空槽，上传后往里追加
+                    for k in range(4):
+                        slots.append({"node": did, "field": "timeline_data",
+                                      "path": "segments[%d].refs[].imageFile" % si,
+                                      "kind": "timeline_ref", "seg": si, "ref": None,
+                                      "label": "段%d·参考图%d（空）" % (si + 1, k + 1),
+                                      "group": 0, "role": "refs", "empty": True})
+                for key, lab in (("startImage", "首帧"), ("endImage", "尾帧")):
+                    v = seg.get(key)
+                    nm = ""
+                    if isinstance(v, dict):
+                        nm = str(v.get("imageFile") or v.get("image_file") or "").strip()
+                    slots.append({"node": did, "field": "timeline_data",
+                                  "path": "segments[%d].%s.imageFile" % (si, key),
+                                  "kind": "timeline_kf", "seg": si, "kf": key,
+                                  "label": "段%d·%s%s" % (si + 1, lab, "" if nm else "（空）"),
+                                  "group": 0, "role": key, "empty": not nm, "orig": nm})
+            break
+
     for i, s in enumerate(slots):
         s["idx"] = i
     return slots
+
+
+def _timeline_apply(graph, slot, name):
+    """把上传后的文件名写进导演台的 timeline_data（imageFile 就是 ComfyUI input 目录里的文件名）。"""
+    did = str(slot.get("node") or "")
+    node = graph.get(did)
+    if not isinstance(node, dict):
+        return False
+    ins = node.setdefault("inputs", {})
+    raw = ins.get("timeline_data")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        tl = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return False
+    segs = tl.get("segments") if isinstance(tl, dict) else None
+    si = int(slot.get("seg") or 0)
+    if not isinstance(segs, list) or si >= len(segs) or not isinstance(segs[si], dict):
+        return False
+    seg = segs[si]
+    if slot.get("kind") == "timeline_kf":
+        key = slot.get("kf") or "startImage"
+        cur = dict(seg.get(key)) if isinstance(seg.get(key), dict) else {}
+        cur["imageFile"] = name
+        cur.setdefault("fileName", "")
+        seg[key] = cur
+    else:
+        refs = seg.get("refs")
+        if not isinstance(refs, list):
+            refs = []
+            seg["refs"] = refs
+        ri = slot.get("ref")
+        if ri is not None and ri < len(refs) and isinstance(refs[ri], dict):
+            refs[ri]["imageFile"] = name
+            refs[ri].setdefault("type", "input")
+            refs[ri].setdefault("subfolder", "")
+            refs[ri].setdefault("fileName", "")
+        else:
+            refs.append({"index": len(refs), "imageFile": name, "fileName": "",
+                         "type": "input", "subfolder": ""})
+    ins["timeline_data"] = json.dumps(tl, ensure_ascii=False)
+    return True
 
 
 def detect(graph):
@@ -733,6 +824,17 @@ def detect(graph):
     else:
         mode = "i2i" if (n_filled or load_images) else "t2i"
 
+    # 时间轴槽按当前模式取舍：i2v 只用首帧、fl2v 首尾帧、r2v/rv2v 只用参考图、v2v 不用图
+    if refs and any(str(r.get("kind") or "").startswith("timeline") for r in refs):
+        keep = {"i2v": ("startImage",), "fl2v": ("startImage", "endImage"),
+                "r2v": ("refs",), "rv2v": ("refs",), "v2v": ()}.get(mode)
+        if keep is not None:
+            refs = [r for r in refs
+                    if not str(r.get("kind") or "").startswith("timeline")
+                    or str(r.get("role") or "") in keep]
+        for i, s in enumerate(refs):
+            s["idx"] = i
+
     loras = _lora_slots(nodes)
     models = _model_slots(nodes)
     _sw_suffix = ""
@@ -784,6 +886,8 @@ def _detect_note(kind, prompt, size, length, ntexts=0, mode="", refs=None):
     elif ntexts > 1:
         tips.append("共 %d 个文本位置，保存前可改选" % ntexts)
     note = "；".join(tips)
+    if refs and any(str(r.get("kind") or "").startswith("timeline") for r in refs):
+        note = (note + "；" if note else "") + "参考图存在导演台时间轴里，上传后自动写回 timeline_data"
     if mode in ("v2v", "rv2v"):
         note = (note + "；" if note else "") + "该模式要源视频：在工作流里换 VHS_LoadVideo 的 video"
     return note
@@ -1418,7 +1522,7 @@ def register(ctx):
         imgs = body.get("images") or []
         refs = d.get("refs") or []
         loaders = d.get("load_images") or []
-        up, filled, made = [], [], 0
+        up, filled, made, tl_filled = [], [], 0, []
         targets = refs if refs else [{"node": x["node"], "field": "image",
                                       "label": "图片 %s" % x["node"], "empty": False} for x in loaders]
 
@@ -1440,6 +1544,11 @@ def register(ctx):
             if i >= len(targets):
                 continue
             t = targets[i]
+            if str(t.get("kind") or "").startswith("timeline"):
+                # 素材在 timeline_data 里：写 imageFile，不动节点连线
+                if _timeline_apply(graph, t, nm):
+                    tl_filled.append(t.get("label") or "时间轴素材")
+                continue
             nid = t.get("node")
             if not nid:
                 # 槽空着：给宿主组节点新建一个 LoadImage 并接连线
@@ -1456,6 +1565,8 @@ def register(ctx):
             used.append("参考图×%d" % len(up))
             if filled:
                 used.append("填入：" + "、".join(filled[:6]) + ("…" if len(filled) > 6 else ""))
+            if tl_filled:
+                used.append("时间轴素材：" + "、".join(tl_filled[:6]) + ("…" if len(tl_filled) > 6 else ""))
             if made:
                 used.append("新建图槽×%d" % made)
 
