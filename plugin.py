@@ -1448,8 +1448,79 @@ def _id_key(nid):
     return (0, int(nid), "") if str(nid).isdigit() else (1, 0, str(nid))
 
 
+COMPLEX_HINTS = ("Director", "Groups", "Group", "Combine", "Timeline",
+                 "PromptBuilder", "PromptBuilder", "Split", "Batch")
+JSON_NAMES = ("timeline_data", "groups", "segments", "prompt_json", "meta")
+
+
+def _json_summary(val):
+    """JSON 字符串输入的摘要：顶层类型、键、条目数。解析不了返回 None。"""
+    if not isinstance(val, str):
+        return None
+    s = val.strip()
+    if not s or s[0] not in "{[":
+        return None
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return None
+    if isinstance(obj, dict):
+        return {"type": "object", "count": len(obj), "keys": list(obj.keys())[:14]}
+    if isinstance(obj, list):
+        keys = []
+        if obj and isinstance(obj[0], dict):
+            keys = list(obj[0].keys())[:14]
+        return {"type": "array", "count": len(obj), "keys": keys}
+    return None
+
+
+def _node_group(nid):
+    """ComfyUI 组/子图节点在 API 里是 `组id:子id`，同前缀归一组。"""
+    s = str(nid)
+    return s.split(":", 1)[0] if ":" in s else None
+
+
+def _edge_list(rows):
+    """从 inputs 的 link 反推连线：[[from_id, from_slot, to_id, to_slot], …]"""
+    out = []
+    for r in rows:
+        for i, it in enumerate(r.get("inputs") or []):
+            if it.get("type") == "link" and it.get("link"):
+                src = str(it["link"][0])
+                out.append([src, int(it["link"][1] or 0), r["id"], i])
+    return out
+
+
+def _layers(rows, edges):
+    """按依赖深度分层（最长路径），带环保护。返回 [[id,…], …]。"""
+    up = {}
+    for a, _as, b, _bi in edges:
+        up.setdefault(b, []).append(a)
+    depth, memo = {}, {}
+
+    def d(nid, seen=()):
+        if nid in memo:
+            return memo[nid]
+        if nid in seen:
+            return 0
+        ups = [u for u in up.get(nid, []) if u in {r["id"] for r in rows}]
+        if not ups:
+            memo[nid] = 0
+            return 0
+        v = 1 + max(d(u, seen + (nid,)) for u in ups)
+        memo[nid] = v
+        return v
+
+    for r in rows:
+        depth[r["id"]] = d(r["id"])
+    out = {}
+    for r in rows:
+        out.setdefault(depth[r["id"]], []).append(r["id"])
+    return [out[k] for k in sorted(out)]
+
+
 def _nodes_view(ctx, graph):
-    """把 API 图拆成「节点 → 可改输入」的清单，给前端渲染。"""
+    """把 API 图拆成「节点 → 可改输入」的清单，给前端渲染（列表 + 画布）。"""
     rows, online = [], 0
     for nid in sorted(graph, key=_id_key):
         node = graph.get(nid) or {}
@@ -1460,8 +1531,8 @@ def _nodes_view(ctx, graph):
         if info:
             online += 1
         specs = _oi_inputs(info)
-        ins = []
-        for name, val in (node.get("inputs") or {}).items():
+        ins, jsons, n_edit = [], [], 0
+        for name, val in ((node.get("inputs") or {})).items():
             kind, options, mn, mx, step = _infer_input(name, val, specs.get(name))
             item = {"name": name, "type": kind}
             if kind == "link":
@@ -1469,19 +1540,31 @@ def _nodes_view(ctx, graph):
                 item["from"] = str(val[0])
                 item["value"] = None
             else:
+                n_edit += 1
                 item["value"] = val
                 item["options"] = options
                 item["min"], item["max"], item["step"] = mn, mx, step
+                js = _json_summary(val) if (name in JSON_NAMES or kind == "multiline") else None
+                if js:
+                    item["json"] = js
+                    item["type"] = "json"
+                    jsons.append({"name": name, "summary": js})
             ins.append(item)
         outs = []
         if info:
             names = info.get("output_name") or []
             for i, t in enumerate(info.get("output") or []):
                 outs.append({"type": t, "name": names[i] if i < len(names) else t})
-        rows.append({"id": nid, "class": cls,
-                     "title": (info or {}).get("display_name") or cls,
-                     "cat": _node_cat(cls), "inputs": ins, "outputs": outs})
-    return rows, online
+        row = {"id": nid, "class": cls,
+               "title": (info or {}).get("display_name") or cls,
+               "cat": _node_cat(cls), "inputs": ins, "outputs": outs,
+               "group": _node_group(nid)}
+        row["complex"] = bool(jsons) or any(h in cls for h in COMPLEX_HINTS) or n_edit > 12
+        if jsons:
+            row["json"] = jsons
+        rows.append(row)
+    edges = _edge_list(rows)
+    return rows, online, edges, _layers(rows, edges)
 
 
 def _apply_nodes(graph, edits):
@@ -1673,10 +1756,12 @@ def register(ctx):
             graph = _load_graph(ctx, wid)
         except (OSError, ValueError) as e:
             return {"ok": False, "error": "读工作流失败：%s" % e}
-        rows, online = _nodes_view(ctx, graph)
+        rows, online, edges, layers = _nodes_view(ctx, graph)
         writable = sum(1 for n in rows for i in n["inputs"] if i["type"] != "link")
+        groups = sorted({n["group"] for n in rows if n.get("group")})
         return {"ok": True, "count": len(rows), "online": online,
-                "writable": writable, "nodes": rows, "cats": CAT_NAMES}
+                "writable": writable, "nodes": rows, "cats": CAT_NAMES,
+                "edges": edges, "layers": layers, "groups": groups}
 
     @ctx.route("setnodes", ["POST"])
     def _setnodes(body, query):

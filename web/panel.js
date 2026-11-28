@@ -21,24 +21,52 @@
   function q(sel, root) { return (root || document).querySelector(sel); }
   function toast(m, t, api) { (api || PSPlugin).toast(m, t); }
 
+  /* 整页外壳：顶部工具条 + 左画布 + 右侧参数栏（inner 就是原来侧栏那一整套面板） */
+  function SHELL(inner) {
+    return '<div class="cv-app">' +
+      '<div class="cv-bar">' +
+      '<select class="cr-sel" id="crWf" title="选择工作流"></select>' +
+      '<button class="cr-btn sm" id="crReload" title="重新读取工作流列表">刷新</button>' +
+      '<button class="cr-btn sm" id="crImpBtn" title="导入 ComfyUI 的 api json">导入工作流</button>' +
+      '<span class="cr-dot" id="crDot"></span><span class="mini" id="crConn">检测中…</span>' +
+      '<span class="cv-sp"></span>' +
+      '<span class="cv-seg"><button class="cr-btn sm on" id="cvGraphBtn">画布</button>' +
+      '<button class="cr-btn sm" id="cvListBtn">列表</button></span>' +
+      '<button class="cr-btn sm" id="cvZOut" title="缩小">－</button>' +
+      '<i class="mini cv-zp" id="cvZpct">100%</i>' +
+      '<button class="cr-btn sm" id="cvZIn" title="放大">＋</button>' +
+      '<button class="cr-btn sm" id="cvFit" title="缩放到看得全">适应</button>' +
+      '<button class="cr-btn sm" id="crSaveTop" title="把改动写回工作流 json">保存改动</button>' +
+      '<button class="cr-btn primary" id="crRunTop" title="按当前参数生成">生成</button>' +
+      '</div>' +
+      '<div class="cv-wrap">' +
+      '<div class="cv-main">' +
+      '<div class="cv-canvas" id="cvCanvas">' +
+      '<div class="cv-stage" id="cvStage">' +
+      '<svg class="cv-edges" id="cvEdges"></svg>' +
+      '<div class="cv-nodes" id="cvNodesBox"></div>' +
+      '<div class="cv-groups" id="cvGroups"></div>' +
+      '</div>' +
+      '<div class="cv-empty" id="cvEmpty">先导入一个 ComfyUI 的 API 工作流，这里会画出节点图</div>' +
+      '</div>' +
+      '<div class="cv-listbox" id="cvList" style="display:none"></div>' +
+      '</div>' +
+      '<div class="cv-side">' + inner + '</div>' +
+      '</div></div>';
+  }
+
   function render(el, api) {
     var S = { items: [], cur: null, tab: "gen", busy: false, timer: null, last: null };
     var PICK = { models: {}, options: {}, lora: {}, nodeEdits: {}, nodeData: null, pmFiles: [] };
 
-    el.innerHTML =
+    el.innerHTML = SHELL(
       '<div class="cr-tabs">' +
-      '  <button class="cr-tab on" data-tab="gen">生成</button>' +
+      '  <button class="cr-tab on" data-tab="gen">生成参数</button>' +
       '  <button class="cr-tab" data-tab="imp">导入工作流</button>' +
-      '  <span class="cr-dot" id="crDot" title="ComfyUI 连接状态"></span>' +
-      '  <span class="mini" id="crConn">检测中…</span>' +
       '</div>' +
 
       /* ---------------- 生成 ---------------- */
       '<div class="cr-pane" data-pane="gen">' +
-      '  <div class="cr-row">' +
-      '    <select class="cr-sel" id="crWf"><option value="">（还没有导入工作流）</option></select>' +
-      '    <button class="cr-btn sm" id="crReload" title="重新载入列表">刷新</button>' +
-      '  </div>' +
       '  <div class="mini" id="crWfMeta"></div>' +
       '  <label class="cr-lb">提示词</label>' +
       '  <textarea class="cr-ta" id="crPrompt" rows="4" placeholder="写上这一张 / 这一段要什么画面。留空＝沿用工作流里的原文。"></textarea>' +
@@ -66,7 +94,7 @@
       '    <button class="cr-btn primary" id="crImport">解析并保存</button></div>' +
       '  <div id="crDetect"></div>' +
       '  <div id="crSaved"></div>' +
-      '</div>';
+      '</div>');
 
     var $ = function (s) { return q(s, el); };
 
@@ -507,6 +535,384 @@
       });
     }
 
+    /* ================= 画布视图（节点图，样子照 ComfyUI） ================= */
+    var CV = { s: 1, tx: 24, ty: 20, pos: {}, data: null, drag: null, pan: null, sel: "" };
+
+    function cvApply() {
+      var st = $("#cvStage");
+      if (!st) return;
+      st.style.transform = "translate(" + CV.tx + "px," + CV.ty + "px) scale(" + CV.s + ")";
+      var p = $("#cvZpct");
+      if (p) p.textContent = Math.round(CV.s * 100) + "%";
+    }
+
+    function cvHeight(n) {
+      var h = 34 + 14;   // head + padding
+      if (n.title && n.title !== n.class) h += 16;
+      (n.inputs || []).forEach(function (i) {
+        h += (i.type === "multiline" || i.type === "text") ? 44 : (i.type === "json" ? 30 : 24);
+      });
+      return h;
+    }
+
+    function cvRowHtml(nid, i, idx) {
+      var k = 'data-nid="' + esc(nid) + '" data-nf="' + esc(i.name) + '"';
+      var lab = '<label title="' + esc(i.name) + '">' + esc(i.name) + "</label>";
+      var pin = '<span class="cv-pin in" title="' + esc(i.type) + '"></span>';
+      if (i.type === "link") {
+        return '<div class="cv-row link" data-row="' + idx + '">' + pin + lab +
+          '<span class="cv-from" title="连线来自 #' + esc(i.from) + '">#' + esc(i.from) + "</span></div>";
+      }
+      var v = (i.value == null) ? "" : i.value;
+      if (i.type === "json") {
+        var js = i.json || {};
+        var tip = (js.type === "array" ? "数组 " + js.count + " 项" : "对象 " + js.count + " 键") +
+          (js.keys && js.keys.length ? "：" + js.keys.slice(0, 3).join("、") : "");
+        return '<div class="cv-row json" data-row="' + idx + '">' + pin + lab +
+          '<span class="cv-json" data-jbtn="' + esc(nid) + "|" + esc(i.name) + '" title="点开编辑这段 JSON">' +
+          esc(tip) + "</span></div>";
+      }
+      if (i.type === "toggle") {
+        var ck = (v === true || v === 1 || v === "1" || v === "true") ? " checked" : "";
+        return '<div class="cv-row" data-row="' + idx + '">' + pin + lab +
+          '<input type="checkbox" class="cv-ck" data-kind="toggle" ' + k + ck + "></div>";
+      }
+      if (i.type === "combo") {
+        var opts = (i.options || []).slice();
+        if (v !== "" && opts.indexOf(v) < 0) opts.unshift(v);
+        return '<div class="cv-row" data-row="' + idx + '">' + pin + lab +
+          '<select class="cv-sel" data-kind="combo" ' + k + ">" + opts.map(function (o) {
+            return '<option value="' + esc(o) + '"' + (String(o) === String(v) ? " selected" : "") + ">" + esc(o) + "</option>";
+          }).join("") + "</select></div>";
+      }
+      if (i.type === "number") {
+        var vs = String(v), nv = Number(v);
+        if (v !== "" && isFinite(nv) && !Number.isInteger(nv)) vs = String(parseFloat(nv.toFixed(6)));
+        var mn = (i.min == null) ? "" : ' min="' + i.min + '"';
+        var mx = (i.max == null) ? "" : ' max="' + i.max + '"';
+        var st = (i.step == null) ? "" : ' step="' + i.step + '"';
+        return '<div class="cv-row" data-row="' + idx + '">' + pin + lab +
+          '<input class="cv-inp" type="number" data-kind="number" ' + k + mn + mx + st + ' value="' + esc(vs) + '"></div>';
+      }
+      if (i.type === "multiline" || i.type === "text") {
+        return '<div class="cv-row" data-row="' + idx + '">' + pin + lab +
+          '<textarea class="cv-ta" rows="2" data-kind="' + i.type + '" ' + k + ">" + esc(v) + "</textarea></div>";
+      }
+      return '<div class="cv-row" data-row="' + idx + '">' + pin + lab +
+        '<input class="cv-inp" data-kind="text" ' + k + ' value="' + esc(v) + '"></div>';
+    }
+
+    function cvNodeHtml(n, p) {
+      var rows = (n.inputs || []).map(function (i, idx) { return cvRowHtml(n.id, i, idx); }).join("");
+      var outs = (n.outputs || []).map(function (o, i) {
+        return '<i class="cv-pin out" data-out="' + i + '" title="' + esc(o.type) + '"></i>';
+      }).join("");
+      var sub = (n.title && n.title !== n.class) ? n.title : "";
+      return '<div class="cv-node cat-' + esc(n.cat || "other") + (n.complex ? " cplx" : "") +
+        '" data-nid="' + esc(n.id) + '" style="left:' + p.x + "px;top:" + p.y + "px;width:" + p.w + 'px">' +
+        '<div class="cv-head"><span class="cv-dot"></span><b title="' + esc(n.class) + '">' + esc(n.class) + "</b>" +
+        (n.complex ? '<i class="cv-badge">复合</i>' : "") +
+        '<span class="cv-id">#' + esc(n.id) + '</span><span class="cv-outs">' + outs + "</span></div>" +
+        (sub ? '<div class="cv-sub">' + esc(sub) + "</div>" : "") +
+        '<div class="cv-rows">' + (rows || '<div class="cv-row"><span class="cv-pin in"></span><label>（没有输入）</label></div>') + "</div></div>";
+    }
+
+    function cvDraw(r) {
+      if (!r) return;
+      CV.data = r;
+      var box = $("#cvNodesBox"), svg = $("#cvEdges"), grp = $("#cvGroups"), empty = $("#cvEmpty");
+      if (!box || !svg) return;
+      var nodes = r.nodes || [];
+      if (!nodes.length) {
+        box.innerHTML = ""; svg.innerHTML = "";
+        if (grp) grp.innerHTML = "";
+        if (empty) empty.style.display = "";
+        return;
+      }
+      if (empty) empty.style.display = "none";
+      var layers = (r.layers && r.layers.length) ? r.layers : [nodes.map(function (n) { return n.id; })];
+      var W = 300, GX = 82, GY = 14, X0 = 24, Y0 = 20;
+      var pos = {};
+      layers.forEach(function (ids, li) {
+        var y = Y0;
+        ids.forEach(function (id) {
+          var n = nodes.filter(function (x) { return x.id === id; })[0];
+          if (!n) return;
+          pos[id] = { x: X0 + li * (W + GX), y: y, w: W, h: cvHeight(n) };
+          y += pos[id].h + GY;
+        });
+      });
+      box.innerHTML = nodes.map(function (n) { return cvNodeHtml(n, pos[n.id] || { x: 0, y: 0, w: W }); }).join("");
+      CV.pos = pos;
+      cvMeasure(box, pos);
+      cvRelayout(layers, pos);
+      box.querySelectorAll(".cv-node").forEach(function (el) {
+        var p = pos[el.dataset.nid];
+        if (p) { el.style.left = p.x + "px"; el.style.top = p.y + "px"; }
+      });
+      cvGroups(nodes, pos, grp);
+      cvEdges(r.edges || [], nodes, pos, svg, box);
+      cvBind(box, pos);
+      cvApply();
+    }
+
+    function cvMeasure(box, pos) {
+      box.querySelectorAll(".cv-node").forEach(function (el) {
+        var p = pos[el.dataset.nid];
+        if (p && el.offsetHeight) p.h = el.offsetHeight;
+      });
+    }
+
+    function cvRelayout(layers, pos) {
+      layers.forEach(function (ids) {
+        var y = 20;
+        ids.forEach(function (id) {
+          var p = pos[id];
+          if (!p) return;
+          p.y = y;
+          y += p.h + 14;
+        });
+      });
+    }
+
+    function cvGroups(nodes, pos, host) {
+      if (!host) return;
+      var by = {};
+      nodes.forEach(function (n) {
+        if (n.group) (by[n.group] = by[n.group] || []).push(n.id);
+      });
+      host.innerHTML = Object.keys(by).map(function (g) {
+        var ids = by[g], xs = [], ys = [], xe = [], ye = [];
+        ids.forEach(function (id) {
+          var p = pos[id];
+          if (!p) return;
+          xs.push(p.x); ys.push(p.y); xe.push(p.x + p.w); ye.push(p.y + p.h);
+        });
+        if (!xs.length) return "";
+        var pad = 16;
+        return '<div class="cv-group" style="left:' + (Math.min.apply(null, xs) - pad) + "px;top:" +
+          (Math.min.apply(null, ys) - 26) + "px;width:" + (Math.max.apply(null, xe) - Math.min.apply(null, xs) + pad * 2) +
+          "px;height:" + (Math.max.apply(null, ye) - Math.min.apply(null, ys) + pad + 26) + 'px">' +
+          '<span class="cv-gt">组 ' + esc(g) + " · " + ids.length + " 个节点</span></div>";
+      }).join("");
+    }
+
+    function cvEdges(edges, nodes, pos, svg, box) {
+      var byId = {};
+      nodes.forEach(function (n) { byId[n.id] = n; });
+      var paths = [];
+      edges.forEach(function (e) {
+        var src = String(e[0]), dst = String(e[2]), di = e[3];
+        var ps = pos[src], pd = pos[dst];
+        if (!ps || !pd) return;
+        var el = box.querySelector('.cv-node[data-nid="' + src.replace(/"/g, '\\"') + '"]');
+        var x1 = ps.x + ps.w, y1 = ps.y + 17;
+        if (el) {
+          var out = el.querySelector('.cv-pin.out[data-out="' + (e[1] || 0) + '"]');
+          if (out) {
+            var ob = out.getBoundingClientRect(), sb = box.getBoundingClientRect(), sc = CV.s;
+            y1 = (ob.top - sb.top) / sc + ob.height / (2 * sc);
+            x1 = (ob.left - sb.left) / sc + ob.width / (2 * sc);
+          }
+        }
+        var te = box.querySelector('.cv-node[data-nid="' + dst.replace(/"/g, '\\"') + '"] [data-row="' + di + '"]');
+        var y2 = pd.y + 50 + (di || 0) * 24, x2 = pd.x;
+        if (te) {
+          var tb = te.getBoundingClientRect(), sb2 = box.getBoundingClientRect(), sc2 = CV.s;
+          y2 = (tb.top - sb2.top) / sc2 + tb.height / (2 * sc2);
+          x2 = (tb.left - sb2.left) / sc2;
+        }
+        var dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
+        paths.push('<path d="M' + x1.toFixed(1) + "," + y1.toFixed(1) + " C" + (x1 + dx).toFixed(1) + "," + y1.toFixed(1) +
+          " " + (x2 - dx).toFixed(1) + "," + y2.toFixed(1) + " " + x2.toFixed(1) + "," + y2.toFixed(1) + '"></path>');
+      });
+      svg.innerHTML = paths.join("");
+    }
+
+    function cvBind(box, pos) {
+      box.querySelectorAll("[data-nf]").forEach(function (el) {
+        var kind = el.dataset.kind;
+        el.addEventListener(kind === "toggle" ? "change" : "input", function () {
+          var v = kind === "toggle" ? el.checked : el.value;
+          if (kind === "number") v = el.value === "" ? "" : Number(el.value);
+          addEdit(el.dataset.nid, el.dataset.nf, v);
+          var nd = el.closest(".cv-node");
+          if (nd) nd.classList.add("edited");
+        });
+      });
+      box.querySelectorAll("[data-jbtn]").forEach(function (el) {
+        el.onclick = function (ev) {
+          ev.stopPropagation();
+          var p = el.dataset.jbtn.split("|");
+          cvJson(p[0], p[1]);
+        };
+      });
+      box.querySelectorAll(".cv-node").forEach(function (el) {
+        el.addEventListener("mousedown", function (ev) {
+          if (ev.target.closest("input,textarea,select,label,.cv-json")) return;
+          if (ev.target.closest(".cv-head")) {
+            CV.drag = { id: el.dataset.nid, sx: ev.clientX, sy: ev.clientY,
+              ox: pos[el.dataset.nid].x, oy: pos[el.dataset.nid].y };
+            el.classList.add("dragging");
+            ev.preventDefault();
+            return;
+          }
+          CV.sel = el.dataset.nid;
+          box.querySelectorAll(".cv-node.sel").forEach(function (x) { x.classList.remove("sel"); });
+          el.classList.add("sel");
+        });
+      });
+    }
+
+    function cvJson(nid, field) {
+      var n = ((CV.data || {}).nodes || []).filter(function (x) { return x.id === nid; })[0];
+      if (!n) return;
+      var it = (n.inputs || []).filter(function (i) { return i.name === field; })[0];
+      if (!it) return;
+      var val = typeof it.value === "string" ? it.value : JSON.stringify(it.value, null, 2);
+      var mask = document.createElement("div");
+      mask.className = "cv-mask";
+      mask.innerHTML = '<div class="cv-dlg"><div class="cv-dlg-h"><b>#' + esc(nid) + " · " + esc(n.class) + " › " + esc(field) +
+        '</b><button class="cr-btn sm" data-x>关闭</button></div>' +
+        '<div class="mini">这是节点里的复合数据（' + (it.json ? (it.json.type === "array" ? "数组 " + it.json.count + " 项" : "对象 " + it.json.count + " 键") : "JSON") +
+        "）。改完点「写回」，生成时会带上。</div>" +
+        '<textarea class="cv-dlg-ta" spellcheck="false"></textarea>' +
+        '<div class="cv-dlg-f"><button class="cr-btn sm" data-fmt>格式化</button><button class="cr-btn primary sm" data-save>写回</button></div></div>';
+      var ta = mask.querySelector("textarea");
+      ta.value = val;
+      mask.querySelector("[data-x]").onclick = function () { mask.remove(); };
+      mask.querySelector("[data-fmt]").onclick = function () {
+        try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); } catch (e) { toast("JSON 格式不对：" + e.message, "err", api); }
+      };
+      mask.querySelector("[data-save]").onclick = function () {
+        var txt = ta.value;
+        try { JSON.parse(txt); } catch (e) { toast("JSON 格式不对：" + e.message, "err", api); return; }
+        addEdit(nid, field, txt);
+        var el = $("#cvNodesBox .cv-node[data-nid=\"" + nid + "\"]");
+        if (el) el.classList.add("edited");
+        toast("已改 #" + nid + " 的 " + field + "，生成或保存时生效", "ok", api);
+        mask.remove();
+      };
+      document.body.appendChild(mask);
+    }
+
+    function cvFit() {
+      var box = $("#cvCanvas");
+      if (!box || !Object.keys(CV.pos).length) return;
+      var xs = [], ys = [], xe = [], ye = [];
+      Object.keys(CV.pos).forEach(function (k) {
+        var p = CV.pos[k];
+        xs.push(p.x); ys.push(p.y); xe.push(p.x + p.w); ye.push(p.y + p.h);
+      });
+      var w = Math.max.apply(null, xe) - Math.min.apply(null, xs);
+      var vw = box.clientWidth - 48;
+      CV.s = Math.min(1.1, Math.max(0.6, vw / Math.max(1, w)));
+      CV.tx = 16 - Math.min.apply(null, xs) * CV.s;
+      CV.ty = 16 - Math.min.apply(null, ys) * CV.s;
+      cvApply();
+    }
+
+    function cvView(mode) {
+      var g = $("#cvCanvas"), l = $("#cvList");
+      if (g) g.style.display = mode === "graph" ? "" : "none";
+      if (l) l.style.display = mode === "graph" ? "none" : "";
+      var b1 = $("#cvGraphBtn"), b2 = $("#cvListBtn");
+      if (b1) b1.classList.toggle("on", mode === "graph");
+      if (b2) b2.classList.toggle("on", mode !== "graph");
+      try { localStorage.setItem("ps-comfy-view", mode); } catch (e) { }
+    }
+
+    function cvPaintList(r) {
+      var box = $("#cvList");
+      if (!box) return;
+      var nodes = (r && r.nodes) || [];
+      if (!nodes.length) { box.innerHTML = '<div class="mini">没有节点</div>'; return; }
+      box.innerHTML = '<table class="cv-table"><thead><tr><th>#</th><th>节点</th><th>类别</th><th>可改</th><th>连线</th></tr></thead><tbody>' +
+        nodes.map(function (n) {
+          var w = (n.inputs || []).filter(function (i) { return i.type !== "link"; }).length;
+          var k = (n.inputs || []).filter(function (i) { return i.type === "link"; }).length;
+          return '<tr data-go="' + esc(n.id) + '"><td>#' + esc(n.id) + "</td><td><b>" + esc(n.class) + "</b>" +
+            (n.complex ? ' <i class="cv-badge">复合</i>' : "") + "</td><td>" + esc((r.cats || {})[n.cat] || n.cat) +
+            "</td><td>" + w + "</td><td>" + k + "</td></tr>";
+        }).join("") + "</tbody></table>";
+      box.querySelectorAll("[data-go]").forEach(function (tr) {
+        tr.onclick = function () {
+          cvView("graph");
+          var el = $("#cvNodesBox .cv-node[data-nid=\"" + tr.dataset.go + "\"]");
+          if (el) {
+            var p = CV.pos[tr.dataset.go];
+            CV.tx = 120 - p.x * CV.s; CV.ty = 80 - p.y * CV.s;
+            cvApply();
+            el.classList.add("sel");
+            setTimeout(function () { el.classList.remove("sel"); }, 1400);
+          }
+        };
+      });
+    }
+
+    async function cvPaint() {
+      if (!PICK.nodeData || !S.cur) return;
+      cvPaintList(PICK.nodeData);
+      cvDraw(PICK.nodeData);
+      cvFit();
+    }
+
+    /* 画布手势：平移 / 缩放 / 拖节点 */
+    (function bindCanvasGestures() {
+      var cv = $("#cvCanvas");
+      if (!cv) return;
+      cv.addEventListener("mousedown", function (ev) {
+        if (ev.target.closest(".cv-node")) return;
+        CV.pan = { sx: ev.clientX, sy: ev.clientY, tx: CV.tx, ty: CV.ty };
+        cv.classList.add("panning");
+      });
+      window.addEventListener("mousemove", function (ev) {
+        if (CV.drag) {
+          var p = CV.pos[CV.drag.id];
+          if (!p) return;
+          p.x = CV.drag.ox + (ev.clientX - CV.drag.sx) / CV.s;
+          p.y = CV.drag.oy + (ev.clientY - CV.drag.sy) / CV.s;
+          var el = $("#cvNodesBox .cv-node[data-nid=\"" + CV.drag.id + "\"]");
+          if (el) { el.style.left = p.x + "px"; el.style.top = p.y + "px"; }
+          if (CV.data) cvEdges(CV.data.edges || [], CV.data.nodes || [], CV.pos, $("#cvEdges"), $("#cvNodesBox"));
+          return;
+        }
+        if (CV.pan) {
+          CV.tx = CV.pan.tx + (ev.clientX - CV.pan.sx);
+          CV.ty = CV.pan.ty + (ev.clientY - CV.pan.sy);
+          cvApply();
+        }
+      });
+      window.addEventListener("mouseup", function () {
+        if (CV.drag) {
+          var el = $("#cvNodesBox .cv-node.dragging");
+          if (el) el.classList.remove("dragging");
+          CV.drag = null;
+        }
+        CV.pan = null;
+        cv.classList.remove("panning");
+      });
+      cv.addEventListener("wheel", function (ev) {
+        ev.preventDefault();
+        var r = cv.getBoundingClientRect();
+        var mx = ev.clientX - r.left, my = ev.clientY - r.top;
+        var k = ev.deltaY < 0 ? 1.08 : 1 / 1.08;
+        var s2 = Math.min(1.8, Math.max(0.3, CV.s * k));
+        CV.tx = mx - (mx - CV.tx) * (s2 / CV.s);
+        CV.ty = my - (my - CV.ty) * (s2 / CV.s);
+        CV.s = s2;
+        cvApply();
+      }, { passive: false });
+      var zin = $("#cvZIn"), zout = $("#cvZOut"), fit = $("#cvFit");
+      if (zin) zin.onclick = function () { CV.s = Math.min(1.8, CV.s * 1.15); cvApply(); };
+      if (zout) zout.onclick = function () { CV.s = Math.max(0.3, CV.s / 1.15); cvApply(); };
+      if (fit) fit.onclick = cvFit;
+      var b1 = $("#cvGraphBtn"), b2 = $("#cvListBtn");
+      if (b1) b1.onclick = function () { cvView("graph"); };
+      if (b2) b2.onclick = function () { cvView("list"); };
+      try { cvView(localStorage.getItem("ps-comfy-view") || "graph"); } catch (e) { cvView("graph"); }
+    })();
+
     async function paintNodes() {
       var box = $("#crNodes");
       if (!box || !S.cur) return;
@@ -526,6 +932,12 @@
         }
       }
       drawNodes(PICK.nodeData);
+      /* 画布已经把这套节点摆出来了，右侧那份折叠列表就收起来（免得两处重复） */
+      var cell = box.closest ? box.closest(".cr-cell") : null;
+      if (cell && $("#cvCanvas")) { cell.style.display = "none"; }
+      cvPaintList(PICK.nodeData);
+      cvDraw(PICK.nodeData);
+      if (!CV.fitted) { CV.fitted = true; setTimeout(cvFit, 30); }
     }
 
     function drawNodes(r) {
@@ -901,6 +1313,10 @@
     $("#crWf").onchange = function () { pick(this.value); };
     $("#crReload").onclick = loadList;
     $("#crRun").onclick = run;
+    var topRun = $("#crRunTop"), topSave = $("#crSaveTop"), topImp = $("#crImpBtn");
+    if (topRun) topRun.onclick = run;
+    if (topSave) topSave.onclick = function () { saveEdits(true); };
+    if (topImp) topImp.onclick = function () { switchTab("imp"); };
     $("#crFromDesc").onclick = function () {
       var src = document.querySelector("#content");
       if (!src || !src.value.trim()) { toast("左边「内容描述」是空的", "e", api); return; }
@@ -960,7 +1376,7 @@
   PSPlugin.addPanel({
     id: "comfy_runner",
     title: "ComfyUI 工作流",
-    mount: "sidebar",
+    mount: "page",
     render: render
   });
 })();
