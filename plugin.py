@@ -233,7 +233,8 @@ def _load_graph(ctx, wid):
 
 
 def _new_id(name):
-    slug = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fa5]+", "_", str(name or "wf")).strip("_")[:24] or "wf"
+    """工作流 id：只用 ASCII，避免 URL 里带中文（urllib / http.client 会报 ascii 错）。"""
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", str(name or "wf")).strip("_")[:24] or "wf"
     return "%s_%s" % (slug, uuid.uuid4().hex[:6])
 
 
@@ -1339,6 +1340,182 @@ def _apply_loras(graph, lora_in):
     return n_ch
 
 
+# ------------------------------------------------------------------ 全节点视图
+CAT_NAMES = {
+    "input": "输入", "loader": "模型", "text": "文本",
+    "sampler": "采样", "output": "输出", "other": "其它",
+}
+
+# 这些节点的输入是「连线」，不能当数值改
+LINK_TYPES = ("IMAGE", "VIDEO", "AUDIO", "MASK", "MODEL", "CLIP", "VAE",
+              "LATENT", "CONDITIONING", "CONTROL_NET", "UPSCALE_MODEL",
+              "CLIP_VISION", "STYLE_MODEL", "SIGMAS", "NOISE")
+
+_OI_CACHE = {}
+
+
+def _is_link(v):
+    """API 图里 [源节点 id, 输出序号] / [id, idx, 类型] 都是连线。"""
+    return isinstance(v, list) and len(v) >= 2 and isinstance(v[0], str) \
+        and isinstance(v[1], (int, float))
+
+
+def _object_info(ctx, cls):
+    """ComfyUI 的 /object_info/<cls>：给输入类型与下拉选项。60 秒缓存，离线返回 None。"""
+    now = time.time()
+    hit = _OI_CACHE.get(cls)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    info = None
+    try:
+        raw = _json(_base(ctx) + "/object_info/" + urllib.parse.quote(cls, safe=""), timeout=20)
+        if isinstance(raw, dict):
+            info = raw.get(cls)
+            if info is None and len(raw) == 1:
+                info = list(raw.values())[0]
+    except Exception:  # noqa: BLE001
+        info = None
+    _OI_CACHE[cls] = (now, info if isinstance(info, dict) else None)
+    return info if isinstance(info, dict) else None
+
+
+def _oi_inputs(info):
+    spec = ((info or {}).get("input") or {})
+    out = {}
+    for grp in ("required", "optional"):
+        for k, v in (spec.get(grp) or {}).items():
+            if isinstance(v, list) and v:
+                out[k] = v
+    return out
+
+
+def _infer_input(name, val, meta):
+    """判定一个输入是什么控件：link / combo / number / toggle / text / multiline / other。"""
+    if _is_link(val):
+        return "link", None, None, None, None
+    t, opts = None, {}
+    if isinstance(meta, list) and meta:
+        head = meta[0]
+        if isinstance(head, list):
+            t, opts = "COMBO", {"options": head}
+        elif isinstance(head, str):
+            t = head.upper()
+            if len(meta) > 1 and isinstance(meta[1], dict):
+                opts = meta[1]
+    if t == "COMBO":
+        return "combo", list(opts.get("options") or []), None, None, None
+    if t in ("INT", "FLOAT"):
+        return ("number", None, opts.get("min"), opts.get("max"),
+                opts.get("step") or (1 if t == "INT" else 0.01))
+    if t == "BOOLEAN":
+        return "toggle", None, None, None, None
+    if t == "STRING":
+        return ("multiline" if opts.get("multiline") else "text"), None, None, None, None
+    if t in LINK_TYPES:
+        return "link", None, None, None, None
+    # 没有节点定义（ComfyUI 没开）：按值猜
+    if isinstance(val, bool):
+        return "toggle", None, None, None, None
+    if isinstance(val, (int, float)):
+        return "number", None, None, None, 1 if isinstance(val, int) else 0.01
+    if isinstance(val, str):
+        if name in TEXT_FIELDS or len(val) > 40 or "\n" in val:
+            return "multiline", None, None, None, None
+        return "text", None, None, None, None
+    return "other", None, None, None, None
+
+
+def _node_cat(cls):
+    c = cls or ""
+    if c in IMAGE_OUT or c in VIDEO_OUT:
+        return "output"
+    for h in SAMPLER_HINT:
+        if h in c:
+            return "sampler"
+    if "Sampler" in c or "Guidance" in c or "Guider" in c:
+        return "sampler"
+    if "Loader" in c:
+        return "loader"
+    if c in ("LoadImage", "LoadVideo", "VHS_LoadVideo", "LoadAudio",
+             "PrimitiveString", "PrimitiveStringMultiline", "PrimitiveNode"):
+        return "input"
+    if "Encode" in c:
+        return "text"
+    return "other"
+
+
+def _id_key(nid):
+    return (0, int(nid), "") if str(nid).isdigit() else (1, 0, str(nid))
+
+
+def _nodes_view(ctx, graph):
+    """把 API 图拆成「节点 → 可改输入」的清单，给前端渲染。"""
+    rows, online = [], 0
+    for nid in sorted(graph, key=_id_key):
+        node = graph.get(nid) or {}
+        if not isinstance(node, dict):
+            continue
+        cls = str(node.get("class_type") or "")
+        info = _object_info(ctx, cls)
+        if info:
+            online += 1
+        specs = _oi_inputs(info)
+        ins = []
+        for name, val in (node.get("inputs") or {}).items():
+            kind, options, mn, mx, step = _infer_input(name, val, specs.get(name))
+            item = {"name": name, "type": kind}
+            if kind == "link":
+                item["link"] = [val[0], val[1]]
+                item["from"] = str(val[0])
+                item["value"] = None
+            else:
+                item["value"] = val
+                item["options"] = options
+                item["min"], item["max"], item["step"] = mn, mx, step
+            ins.append(item)
+        outs = []
+        if info:
+            names = info.get("output_name") or []
+            for i, t in enumerate(info.get("output") or []):
+                outs.append({"type": t, "name": names[i] if i < len(names) else t})
+        rows.append({"id": nid, "class": cls,
+                     "title": (info or {}).get("display_name") or cls,
+                     "cat": _node_cat(cls), "inputs": ins, "outputs": outs})
+    return rows, online
+
+
+def _apply_nodes(graph, edits):
+    """把用户在「全部节点」里改的值写回图；连线输入跳过。返回改动条数。"""
+    n_ch = 0
+    if not isinstance(edits, list):
+        return 0
+    for e in edits:
+        if not isinstance(e, dict):
+            continue
+        nid, f = str(e.get("node") or ""), str(e.get("field") or "")
+        node = graph.get(nid)
+        if not isinstance(node, dict) or not f:
+            continue
+        ins = node.setdefault("inputs", {})
+        cur = ins.get(f)
+        if _is_link(cur):
+            continue
+        val = e.get("value")
+        if isinstance(cur, bool):
+            if not isinstance(val, bool):
+                val = str(val).strip().lower() in ("1", "true", "on", "yes")
+        elif isinstance(cur, (int, float)):
+            try:
+                val = int(float(val)) if isinstance(cur, int) else float(val)
+            except (TypeError, ValueError):
+                continue
+        elif isinstance(val, (dict, list)):
+            continue
+        ins[f] = val
+        n_ch += 1
+    return n_ch
+
+
 def register(ctx):
     ctx.log("ComfyUI 工作流插件加载，ComfyUI=%s" % _base(ctx))
 
@@ -1467,6 +1644,9 @@ def register(ctx):
         n_ch = _apply_loras(graph, body.get("loras"))
         if n_ch:
             changed.append("LoRA 强度")
+        n_ch = _apply_nodes(graph, body.get("nodes"))
+        if n_ch:
+            changed.append("节点改动×%d" % n_ch)
 
         if not changed:
             return {"ok": True, "changed": [], "item": item, "note": "没有需要保存的改动"}
@@ -1480,6 +1660,48 @@ def register(ctx):
                      "nodes": info["nodes"], "detect": info, "saved": int(time.time())})
         _save_index(ctx, items)
         ctx.log("保存工作流改动 %s：%s" % (item.get("name"), "、".join(changed)))
+        return {"ok": True, "changed": changed, "item": item}
+
+    # ---- 全部节点
+    @ctx.route("nodes", ["GET"])
+    def _nodes(body, query):
+        wid = str(query.get("id") or "")
+        items = _load_index(ctx)
+        if not any(x.get("id") == wid for x in items):
+            return {"ok": False, "error": "没有这个工作流"}
+        try:
+            graph = _load_graph(ctx, wid)
+        except (OSError, ValueError) as e:
+            return {"ok": False, "error": "读工作流失败：%s" % e}
+        rows, online = _nodes_view(ctx, graph)
+        writable = sum(1 for n in rows for i in n["inputs"] if i["type"] != "link")
+        return {"ok": True, "count": len(rows), "online": online,
+                "writable": writable, "nodes": rows, "cats": CAT_NAMES}
+
+    @ctx.route("setnodes", ["POST"])
+    def _setnodes(body, query):
+        wid = str(body.get("id") or "")
+        items = _load_index(ctx)
+        item = next((x for x in items if x.get("id") == wid), None)
+        if not item:
+            return {"ok": False, "error": "没有这个工作流"}
+        try:
+            graph = _load_graph(ctx, wid)
+        except (OSError, ValueError) as e:
+            return {"ok": False, "error": "读工作流失败：%s" % e}
+        changed = _apply_nodes(graph, body.get("edits"))
+        if not changed:
+            return {"ok": True, "changed": 0, "note": "没有可写的改动（连线输入不能改）"}
+        try:
+            with open(_wf_path(ctx, wid), "w", encoding="utf-8") as f:
+                json.dump(graph, f, ensure_ascii=False)
+        except OSError as e:
+            return {"ok": False, "error": "写工作流失败：%s" % e}
+        info = detect(graph)
+        item.update({"kind": info["kind"], "mode": info["mode"],
+                     "nodes": info["nodes"], "detect": info, "saved": int(time.time())})
+        _save_index(ctx, items)
+        ctx.log("保存节点改动 %s：%d 项" % (item.get("name"), changed))
         return {"ok": True, "changed": changed, "item": item}
 
     @ctx.route("run", ["POST"])
@@ -1543,6 +1765,9 @@ def register(ctx):
         n_ch = _apply_loras(graph, body.get("loras"))
         if n_ch:
             used.append("LoRA 强度")
+        n_ch = _apply_nodes(graph, body.get("nodes"))
+        if n_ch:
+            used.append("节点改动×%d" % n_ch)
 
         # 参考图：优先按识别到的槽位顺序填（组·首帧/尾帧/参考图N），空槽新建 LoadImage
         imgs = body.get("images") or []

@@ -23,7 +23,7 @@
 
   function render(el, api) {
     var S = { items: [], cur: null, tab: "gen", busy: false, timer: null, last: null };
-    var PICK = { models: {}, options: {}, lora: {} };
+    var PICK = { models: {}, options: {}, lora: {}, nodeEdits: {}, nodeData: null };
 
     el.innerHTML =
       '<div class="cr-tabs">' +
@@ -114,6 +114,8 @@
 
     function pick(id) {
       S.cur = S.items.filter(function (x) { return x.id === id; })[0] || null;
+      PICK.nodeData = null;
+      PICK.nodeEdits = {};
       paintParams();
       renderSaved();
     }
@@ -197,12 +199,19 @@
       }
       html += modelsCell(d);
       html += loraCell(d);
+      html += '<div class="cr-cell" style="grid-column:1/-1">' +
+        '<div class="cr-sep">全部节点 · 可改的都在这儿</div>' +
+        '<div class="cr-line"><input class="cr-inp" id="crNodeQ" placeholder="搜类名 / 编号（KSampler、19）">' +
+        '<span class="mini" id="crNodeTip"></span></div>' +
+        '<div class="cr-nodes" id="crNodes"><div class="mini">读取节点中…</div></div></div>';
       html += '<div class="cr-cell" style="grid-column:1/-1"><div class="cr-line">' +
         '<button class="cr-btn" id="crPersist" title="把上面改过的模型 / LoRA / 分辨率 / 时长 / 种子写回这份工作流">保存这些改动</button>' +
         '<label class="mini" style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="crAutoSave"> 生成后自动保存</label>' +
         '<span class="mini" id="crSaveTip"></span></div></div>';
       box.innerHTML = html;
       paintRefs();
+      bindNodes();
+      paintNodes();
       var modeSel = $("#crMode");
       if (modeSel) modeSel.onchange = function () { paintRefs(); };
       bindRes();
@@ -406,6 +415,165 @@
       box.textContent = parts.join(" · ") || "—";
     }
 
+    /* ---------- 全部节点 ---------- */
+    function nodeKey(nid, field) { return nid + "|" + field; }
+
+    function countEdits() {
+      var n = Object.keys(PICK.nodeEdits).length;
+      var tip = $("#crNodeTip");
+      if (tip) tip.textContent = n ? "改动 " + n + " 项" : "";
+    }
+
+    function addEdit(nid, field, val) {
+      PICK.nodeEdits[nodeKey(nid, field)] = val;
+      countEdits();
+    }
+
+    function bindNodes() {
+      var qel = $("#crNodeQ");
+      if (qel) {
+        var m = /[?&]q=([^&]*)/.exec(location.search);
+        if (m) { try { qel.value = decodeURIComponent(m[1]); } catch (e) { qel.value = m[1]; } }
+        qel.oninput = function () { filterNodes(qel.value); };
+      }
+      countEdits();
+    }
+
+    function filterNodes(kw) {
+      var box = $("#crNodes");
+      if (!box) return;
+      var q = String(kw || "").trim().toLowerCase();
+      box.querySelectorAll(".cr-nod").forEach(function (el) {
+        var hay = (el.dataset.k || "").toLowerCase();
+        el.style.display = (!q || hay.indexOf(q) >= 0) ? "" : "none";
+      });
+      box.querySelectorAll(".cr-ncat").forEach(function (h) {
+        var n = h.nextElementSibling, vis = 0;
+        while (n && !n.classList.contains("cr-ncat")) {
+          if (n.classList.contains("cr-nod") && n.style.display !== "none") vis++;
+          n = n.nextElementSibling;
+        }
+        h.style.display = vis ? "" : "none";
+      });
+    }
+
+    async function paintNodes() {
+      var box = $("#crNodes");
+      if (!box || !S.cur) return;
+      var wid = S.cur.id;
+      if (!PICK.nodeData || PICK.nodeData.id !== wid) {
+        try {
+          var r = await (await fetch(API + "nodes?id=" + encodeURIComponent(wid))).json();
+          if (!r || !r.ok) {
+            box.innerHTML = '<div class="mini">读不到节点：' + esc((r && r.error) || "未知错误") + "</div>";
+            return;
+          }
+          r.id = wid;
+          PICK.nodeData = r;
+        } catch (e) {
+          box.innerHTML = '<div class="mini">读不到节点：' + esc(e) + "</div>";
+          return;
+        }
+      }
+      drawNodes(PICK.nodeData);
+    }
+
+    function drawNodes(r) {
+      var box = $("#crNodes");
+      if (!box) return;
+      var cats = r.cats || {};
+      var order = ["input", "text", "loader", "sampler", "output", "other"];
+      var byCat = {};
+      (r.nodes || []).forEach(function (n) { (byCat[n.cat] = byCat[n.cat] || []).push(n); });
+      var html = "";
+      var first = true;
+      var openAll = /[?&]allnodes=1/.test(location.search);
+      if (openAll) box.style.maxHeight = "none";
+      order.forEach(function (c) {
+        var list = byCat[c];
+        if (!list || !list.length) return;
+        html += '<div class="cr-ncat">' + esc(cats[c] || c) + " · " + list.length + "</div>";
+        list.forEach(function (n) { html += nodeRow(n, first || openAll); first = false; });
+      });
+      box.innerHTML = html || '<div class="mini">这个工作流没有节点</div>';
+      box.querySelectorAll("[data-nf]").forEach(function (el) {
+        var nid = el.dataset.nid, f = el.dataset.nf, kind = el.dataset.kind;
+        el.addEventListener(kind === "toggle" ? "change" : "input", function () {
+          var v = kind === "toggle" ? el.checked : el.value;
+          if (kind === "number") v = el.value === "" ? "" : Number(el.value);
+          addEdit(nid, f, v);
+        });
+      });
+      filterNodes(($("#crNodeQ") || {}).value || "");
+      var tip = $("#crNodeTip");
+      if (tip) {
+        tip.title = r.online
+          ? "已连 ComfyUI：" + r.online + " 个节点拿到官方定义（" + (r.writable || 0) + " 个可改值）"
+          : "ComfyUI 没连上：类型是按值猜的，连上后下拉框才有官方选项";
+      }
+    }
+
+    function nodeRow(n, open) {
+      var ins = (n.inputs || []).map(function (i) { return inputRow(n.id, i); }).join("");
+      var key = n.id + " " + n.class + " " + (n.title || "");
+      var sub = (n.title && n.title !== n.class) ? n.title : "";
+      return '<details class="cr-nod" data-k="' + esc(key) + '"' + (open ? " open" : "") + '><summary>' +
+        '<span class="cr-nid">#' + esc(n.id) + "</span><b>" + esc(n.class) + "</b>" +
+        (sub ? '<span class="cr-cat">' + esc(sub) + "</span>" : "") +
+        "</summary>" +
+        (ins || '<div class="cr-ni"><span></span><span class="mini">没有可改的输入</span></div>') +
+        "</details>";
+    }
+
+    function inputRow(nid, i) {
+      var k = 'data-nid="' + esc(nid) + '" data-nf="' + esc(i.name) + '"';
+      var lab = '<label title="' + esc(i.name) + '">' + esc(i.name) + "</label>";
+      if (i.type === "link") {
+        return '<div class="cr-ni">' + lab + '<span class="cr-link" title="连线来自节点 #' + esc(i.from) +
+          '，不能在这里改">⇢ #' + esc(i.from) + "</span></div>";
+      }
+      var v = (i.value == null) ? "" : i.value;
+      if (i.type === "toggle") {
+        var ck = (v === true || v === 1 || v === "1" || v === "true") ? " checked" : "";
+        return '<div class="cr-ni">' + lab +
+          '<label class="cr-inl"><input type="checkbox" data-kind="toggle" ' + k + ck + "></label></div>";
+      }
+      if (i.type === "combo") {
+        var opts = (i.options || []).slice();
+        if (v !== "" && opts.indexOf(v) < 0) opts.unshift(v);
+        return '<div class="cr-ni">' + lab + '<select class="cr-sel" data-kind="combo" ' + k + ">" +
+          opts.map(function (o) {
+            return '<option value="' + esc(o) + '"' + (String(o) === String(v) ? " selected" : "") +
+              ">" + esc(o) + "</option>";
+          }).join("") + "</select></div>";
+      }
+      if (i.type === "number") {
+        var vs = String(v);
+        var nv = Number(v);
+        if (v !== "" && isFinite(nv) && !Number.isInteger(nv)) vs = String(parseFloat(nv.toFixed(6)));
+        var mn = (i.min == null) ? "" : ' min="' + i.min + '"';
+        var mx = (i.max == null) ? "" : ' max="' + i.max + '"';
+        var st = (i.step == null) ? "" : ' step="' + i.step + '"';
+        return '<div class="cr-ni">' + lab + '<input class="cr-inp" type="number" data-kind="number" ' +
+          k + mn + mx + st + ' value="' + esc(vs) + '"></div>';
+      }
+      if (i.type === "multiline") {
+        return '<div class="cr-ni">' + lab + '<textarea class="cr-ta" rows="2" data-kind="multiline" ' +
+          k + ">" + esc(v) + "</textarea></div>";
+      }
+      return '<div class="cr-ni">' + lab + '<input class="cr-inp" data-kind="text" ' + k +
+        ' value="' + esc(v) + '"></div>';
+    }
+
+    function collectNodeEdits() {
+      var out = [];
+      Object.keys(PICK.nodeEdits).forEach(function (k) {
+        var p = k.split("|");
+        if (p.length === 2) out.push({ node: p[0], field: p[1], value: PICK.nodeEdits[k] });
+      });
+      return out;
+    }
+
     /* ---------- 已存映射 ---------- */
     function renderSaved() {
       var box = $("#crSaved");
@@ -462,6 +630,8 @@
         it[p[1] === "m" ? "strength_model" : "strength_clip"] = PICK.lora[k];
       });
       if (lora.length) body.loras = lora;
+      var ne = collectNodeEdits();
+      if (ne.length) body.nodes = ne;
       return body;
     }
 
