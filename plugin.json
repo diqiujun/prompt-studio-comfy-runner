@@ -3,7 +3,7 @@
   "name": "ComfyUI 工作流",
   "tagline": "把 ComfyUI 的 API 工作流搬进独立画布页，改参数就能出图、出视频",
   "description": "导入 ComfyUI 导出的 API 格式工作流（api json），在主界面独立一页里按 comfyui 的样子画出节点图：每个节点都能看、都能改（下拉 / 数字 / 多行文本 / 勾选，控件按 ComfyUI 官方定义还原），连线输入只读显示来源；改完点生成会先写回工作流再提交，也可以一键保存回工作流 json。提示词、分辨率、时长、种子、参考图、模型、LoRA 都能改，结果直接预览、可存为参考图。",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "minut",
   "entry": "plugin.py",
   "settings": [

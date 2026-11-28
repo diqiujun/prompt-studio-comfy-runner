@@ -137,15 +137,26 @@
         : '<option value="">（还没有导入工作流）</option>';
       if (S.cur) sel.value = S.cur.id;
       if (!S.items.length) { S.cur = null; paintParams(); }
-      else pick(sel.value || S.items[0].id);
+      else {
+        var q = /[?&]wf=([\w\-]+)/.exec(location.search);
+        var want = (q && q[1]) || sel.value || S.items[0].id;
+        if (!S.items.filter(function (x) { return x.id === want; }).length) want = S.items[0].id;
+        sel.value = want;
+        pick(want);
+      }
     }
 
     function pick(id) {
       S.cur = S.items.filter(function (x) { return x.id === id; })[0] || null;
       PICK.nodeData = null;
       PICK.nodeEdits = {};
+      CV.data = null;
+      CV.pos = {};
+      CV.sel = "";
+      CV.fitted = false;
       paintParams();
       renderSaved();
+      if (S.cur) paintNodes();
     }
 
     /* ---------- 参数区 ---------- */
@@ -606,15 +617,12 @@
 
     function cvNodeHtml(n, p) {
       var rows = (n.inputs || []).map(function (i, idx) { return cvRowHtml(n.id, i, idx); }).join("");
-      var outs = (n.outputs || []).map(function (o, i) {
-        return '<i class="cv-pin out" data-out="' + i + '" title="' + esc(o.type) + '"></i>';
-      }).join("");
       var sub = (n.title && n.title !== n.class) ? n.title : "";
       return '<div class="cv-node cat-' + esc(n.cat || "other") + (n.complex ? " cplx" : "") +
         '" data-nid="' + esc(n.id) + '" style="left:' + p.x + "px;top:" + p.y + "px;width:" + p.w + 'px">' +
         '<div class="cv-head"><span class="cv-dot"></span><b title="' + esc(n.class) + '">' + esc(n.class) + "</b>" +
         (n.complex ? '<i class="cv-badge">复合</i>' : "") +
-        '<span class="cv-id">#' + esc(n.id) + '</span><span class="cv-outs">' + outs + "</span></div>" +
+        '<span class="cv-id">#' + esc(n.id) + "</span></div>" +
         (sub ? '<div class="cv-sub">' + esc(sub) + "</div>" : "") +
         '<div class="cv-rows">' + (rows || '<div class="cv-row"><span class="cv-pin in"></span><label>（没有输入）</label></div>') + "</div></div>";
     }
@@ -710,12 +718,10 @@
         var el = box.querySelector('.cv-node[data-nid="' + src.replace(/"/g, '\\"') + '"]');
         var x1 = ps.x + ps.w, y1 = ps.y + 17;
         if (el) {
-          var out = el.querySelector('.cv-pin.out[data-out="' + (e[1] || 0) + '"]');
-          if (out) {
-            var ob = out.getBoundingClientRect(), sb = box.getBoundingClientRect(), sc = CV.s;
-            y1 = (ob.top - sb.top) / sc + ob.height / (2 * sc);
-            x1 = (ob.left - sb.left) / sc + ob.width / (2 * sc);
-          }
+          var sb = box.getBoundingClientRect(), sc = CV.s;
+          var hb = el.querySelector(".cv-head").getBoundingClientRect();
+          x1 = (hb.right - sb.left) / sc;
+          y1 = (hb.top - sb.top) / sc + hb.height / (2 * sc);
         }
         var te = box.querySelector('.cv-node[data-nid="' + dst.replace(/"/g, '\\"') + '"] [data-row="' + di + '"]');
         var y2 = pd.y + 50 + (di || 0) * 24, x2 = pd.x;

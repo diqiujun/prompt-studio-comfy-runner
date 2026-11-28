@@ -172,7 +172,7 @@
 .cv-id{margin-left:auto;font-size:10px;color:#95a0b2;flex:none}
 .cv-outs{display:inline-flex;align-items:center;gap:4px;flex:none;height:8px}
 .cv-pin{width:8px;height:8px;border-radius:50%;background:#6f9b86;display:inline-block;flex:none}
-.cv-pin.out{background:#7aa2f7}
+.cv-pin.out{background:#ff2222}
 .cv-sub{font-size:10px;color:#95a0b2;padding:3px 8px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cv-rows{padding:5px 7px 7px}
 .cv-row{display:grid;grid-template-columns:10px 92px 1fr;gap:6px;align-items:center;min-height:23px}
