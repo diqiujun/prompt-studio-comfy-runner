@@ -198,3 +198,12 @@
 :root[data-theme=light] .cv-head{background:#eef1f6;border-bottom-color:#dfe4ec}
 :root[data-theme=light] .cv-row .cv-inp,:root[data-theme=light] .cv-row .cv-sel,:root[data-theme=light] .cv-row .cv-ta{background:#fff;color:#1f2430;border-color:#d5dae3}
 :root[data-theme=light] .cv-canvas{background-image:radial-gradient(circle, rgba(60,80,120,.18) 1px, transparent 1px)}
+
+/* narrow window: keep the toolbar on one line */
+@media (max-width:1520px){
+  .cv-bar{gap:4px}
+  .cv-bar .cr-btn{white-space:nowrap}
+  .cv-bar #crConn{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cv-bar #crWf{max-width:190px}
+}
+

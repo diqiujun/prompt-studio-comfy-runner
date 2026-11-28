@@ -227,7 +227,7 @@
       }
       html += modelsCell(d);
       html += loraCell(d);
-      html += '<div class="cr-cell" style="grid-column:1/-1">' +
+      html += '<div class="cr-cell" id="cellNodes" style="grid-column:1/-1">' +
         '<div class="cr-sep">全部节点 · 可改的都在这儿</div>' +
         '<div class="cr-line"><input class="cr-inp" id="crNodeQ" placeholder="搜类名 / 编号（KSampler、19）">' +
         '<span class="mini" id="crNodeTip"></span></div>' +
@@ -237,6 +237,8 @@
         '<label class="mini" style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="crAutoSave"> 生成后自动保存</label>' +
         '<span class="mini" id="crSaveTip"></span></div></div>';
       box.innerHTML = html;
+      var cellN = $("#cellNodes");
+      if (cellN && $("#cvCanvas")) cellN.style.display = "none";
       paintRefs();
       bindNodes();
       paintNodes();
@@ -932,9 +934,6 @@
         }
       }
       drawNodes(PICK.nodeData);
-      /* 画布已经把这套节点摆出来了，右侧那份折叠列表就收起来（免得两处重复） */
-      var cell = box.closest ? box.closest(".cr-cell") : null;
-      if (cell && $("#cvCanvas")) { cell.style.display = "none"; }
       cvPaintList(PICK.nodeData);
       cvDraw(PICK.nodeData);
       if (!CV.fitted) { CV.fitted = true; setTimeout(cvFit, 30); }
