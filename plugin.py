@@ -1771,6 +1771,7 @@ def register(ctx):
 
         # 参考图：优先按识别到的槽位顺序填（组·首帧/尾帧/参考图N），空槽新建 LoadImage
         imgs = body.get("images") or []
+        files = [str(f) for f in (body.get("files") or []) if f]
         refs = d.get("refs") or []
         loaders = d.get("load_images") or []
         up, filled, made, tl_filled = [], [], 0, []
@@ -1784,14 +1785,19 @@ def register(ctx):
             host.setdefault("inputs", {})[host_field] = [nid, 0]
             return nid
 
-        for i, im in enumerate(imgs[:max(1, len(targets))] if targets else []):
-            if not isinstance(im, dict) or not im.get("data_url"):
-                continue
-            try:
-                nm = _upload(ctx, im.get("name") or "ref%d" % (i + 1), im["data_url"])
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": "参考图上传失败：%s（ComfyUI 是否在运行？）" % e}
-            up.append(nm)
+        limit = max(1, len(targets)) if targets else 0
+        n_src = len(files) if files else len(imgs)
+        for i in range(min(n_src, limit) if limit else 0):
+            nm = files[i] if (files and i < len(files)) else None
+            if not nm:
+                im = imgs[i] if i < len(imgs) else None
+                if not isinstance(im, dict) or not im.get("data_url"):
+                    continue
+                try:
+                    nm = _upload(ctx, im.get("name") or "ref%d" % (i + 1), im["data_url"])
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "error": "参考图上传失败：%s（ComfyUI 是否在运行？）" % e}
+                up.append(nm)
             if i >= len(targets):
                 continue
             t = targets[i]
@@ -1814,6 +1820,9 @@ def register(ctx):
                 filled.append(t.get("label") or nid)
         if up:
             used.append("参考图×%d" % len(up))
+        if files:
+            used.append("引用主界面图×%d" % len(files[:limit] if limit else files))
+        if up or files:
             if filled:
                 used.append("填入：" + "、".join(filled[:6]) + ("…" if len(filled) > 6 else ""))
             if tl_filled:
@@ -1866,6 +1875,27 @@ def register(ctx):
                  "subfolder": o["subfolder"], "type": o["type"]})
         return {"ok": True, "state": state, "outputs": outs, "status": st, "comfy": base,
                 "out_dir": os.path.join(ctx.data_dir, "out", pid) if state == "done" else ""}
+
+    @ctx.route("stage", ["POST"])
+    def _stage(body, query):
+        """把 PM 主界面参考区里的图先传进 ComfyUI，回文件名；生成时直接引用，不重复上传。"""
+        imgs = (body or {}).get("images") or []
+        if not imgs:
+            return {"ok": False, "error": "主界面还没有参考图：先在左边「参考图」区拖几张进来"}
+        out = []
+        for i, im in enumerate(imgs):
+            if not isinstance(im, dict) or not im.get("data_url"):
+                continue
+            try:
+                nm = _upload(ctx, im.get("name") or "pm%d" % (i + 1), im["data_url"])
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": "上传失败：%s（ComfyUI 是否在运行？）" % e}
+            out.append({"name": im.get("name") or ("图%d" % (i + 1)), "file": nm,
+                        "url": "/api/plugin/comfy_runner/view?type=input&filename="
+                               + urllib.parse.quote(nm)})
+        if not out:
+            return {"ok": False, "error": "没有可用的图（缺 data_url）"}
+        return {"ok": True, "files": out}
 
     @ctx.route("view", ["GET"])
     def _view(body, query):

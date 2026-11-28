@@ -122,3 +122,9 @@
 .cr-ni .cr-ta{font-size:12px;padding:4px 8px;line-height:1.45}
 .cr-link{font-size:11px;color:var(--fg2,#9aa4b2);opacity:.75}
 .cr-inl{display:flex;align-items:center}
+
+/* PM reference images (reuse main-panel images without re-uploading) */
+.cr-pmrow{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px}
+.cr-pmrow .cr-btn.sm{padding:3px 8px;font-size:11px}
+.cr-pmline{font-size:11px;line-height:1.6;color:#8fe3a8;margin:0 0 6px}
+.cr-pmline.dim{color:var(--fg2,#9aa4b2)}

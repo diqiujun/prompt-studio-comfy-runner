@@ -23,7 +23,7 @@
 
   function render(el, api) {
     var S = { items: [], cur: null, tab: "gen", busy: false, timer: null, last: null };
-    var PICK = { models: {}, options: {}, lora: {}, nodeEdits: {}, nodeData: null };
+    var PICK = { models: {}, options: {}, lora: {}, nodeEdits: {}, nodeData: null, pmFiles: [] };
 
     el.innerHTML =
       '<div class="cr-tabs">' +
@@ -193,7 +193,7 @@
         "</div></div>";
       html += '<div class="cr-cell"><label class="cr-lb">种子（留空＝工作流原值）</label><input class="cr-inp" id="crSeed" placeholder="随机"></div>';
       html += '<div class="cr-cell" style="grid-column:1/-1"><label class="cr-lb">参考图槽</label>' +
-        '<div class="mini" id="crRefs"></div></div>';
+        '<div id="crRefs"></div></div>';
       if (d.note) {
         html += '<div class="cr-cell" style="grid-column:1/-1"><div class="cr-note warn">' + esc(d.note) + "</div></div>";
       }
@@ -412,7 +412,57 @@
       } else if (NEED_IMG[mode]) {
         parts.push("这个工作流没有独立图槽，上传的图会跳过");
       }
-      box.textContent = parts.join(" · ") || "—";
+      // 主界面参考区 → 直接引用（先传到 ComfyUI，生成时用文件名，不重复上传）
+      var pm = PICK.pmFiles || [];
+      var nPm = (api.images ? api.images().length : 0);
+      var pmLine = "";
+      if (pm.length) {
+        pmLine = '<div class="cr-pmline">已接主界面 ' + pm.length + " 张：" +
+          pm.slice(0, 3).map(function (f, i) {
+            return "图" + (i + 1) + "·" + esc(String(f.file).replace(/^pm_\d+_/, ""));
+          }).join("、") + (pm.length > 3 ? "…" : "") +
+          "（生成时直接用这几张，不再重复上传）</div>";
+      } else if (nPm) {
+        pmLine = '<div class="cr-pmline dim">主界面参考区有 ' + nPm + " 张图，点按钮直接引用</div>";
+      }
+      box.innerHTML =
+        '<div class="cr-pmrow">' +
+        '<button class="cr-btn sm" id="crUsePm">' +
+        (pm.length ? "重新取主界面图" : "用主界面参考图") + (nPm ? "（" + nPm + "）" : "") +
+        "</button>" +
+        (pm.length ? '<button class="cr-btn sm" id="crClrPm">改回原图</button>' : "") +
+        "</div>" + pmLine +
+        '<div class="mini">' + esc(parts.join(" · ") || "—") + "</div>";
+      var b = $("#crUsePm");
+      if (b) b.onclick = usePm;
+      var c = $("#crClrPm");
+      if (c) c.onclick = function () {
+        PICK.pmFiles = [];
+        paintRefs();
+        toast("已改回工作流原图", "", api);
+      };
+    }
+
+    function usePm() {
+      var imgs = (api.images && api.images()) || [];
+      if (!imgs.length) { toast("先在左边「参考图」区拖几张图进来", "e", api); return; }
+      var btn = $("#crUsePm");
+      if (btn) { btn.disabled = true; btn.textContent = "上传中…"; }
+      fetch(API + "stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          images: imgs.map(function (im, i) {
+            return { name: "pm" + (i + 1), data_url: im.data_url };
+          })
+        })
+      }).then(function (r) { return r.json(); }).then(function (r) {
+        if (!r || !r.ok) { toast((r && r.error) || "上传失败", "e", api); return; }
+        PICK.pmFiles = r.files || [];
+        toast("已接上 " + PICK.pmFiles.length + " 张主界面图", "", api);
+      }).catch(function (e) {
+        toast("上传失败：" + e.message, "e", api);
+      }).then(function () { paintRefs(); });
     }
 
     /* ---------- 全部节点 ---------- */
@@ -679,9 +729,25 @@
       // 需要图片的模式（含导演台的参考主体/混合模式）：把 PM 里的参考图带过去
       var d = S.cur.detect || {};
       var hasRefs = (d.refs || []).length > 0;
-      if (NEED_IMG[body.mode] || (hasRefs && (api.images && api.images().length))) {
-        var imgs = (api.images && api.images()) || [];
-        body.images = imgs.map(function (im, i) { return { name: "ref" + (i + 1), data_url: im.data_url }; });
+      var pmImgs = (api.images && api.images()) || [];
+      var needImg = NEED_IMG[body.mode] || (hasRefs && pmImgs.length);
+      // 主界面参考图：先把图送进 ComfyUI 换文件名，生成时只传文件名（不重复上传整张图）
+      if (needImg && pmImgs.length && !(PICK.pmFiles || []).length) {
+        try {
+          var st = await (await fetch(API + "stage", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              images: pmImgs.map(function (im, i) { return { name: "pm" + (i + 1), data_url: im.data_url }; })
+            })
+          })).json();
+          if (st && st.ok) { PICK.pmFiles = st.files || []; paintRefs(); }
+        } catch (e) { /* 上传失败就走下面的老路 */ }
+      }
+      var pm = PICK.pmFiles || [];
+      if (pm.length) {
+        body.files = pm.map(function (f) { return f.file; });
+      } else if (needImg) {
+        body.images = pmImgs.map(function (im, i) { return { name: "ref" + (i + 1), data_url: im.data_url }; });
       }
 
       S.busy = true;
